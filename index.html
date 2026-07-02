@@ -416,6 +416,7 @@
   // Point this at your deployed backend (see README.md) once it's live.
   // Example: "https://your-app.onrender.com"
   const API_BASE_URL = "https://snowreport.onrender.com/"; // <-- set this after deploying server.js
+  const API_BASE = API_BASE_URL.replace(/\/+$/, ""); // trailing slash tolerant
 
   // Falls Creek Alpine Resort, VIC, Australia
   const LAT = -36.8768;
@@ -435,6 +436,10 @@
     if ([95,96,99].includes(code)) return "⛈️";
     return "❄️";
   };
+
+  function notConnectedMessage(){
+    return `<div class="loading">Backend not connected — API_BASE_URL is ${API_BASE_URL ? `set to <code>${API_BASE_URL}</code> but not responding` : "empty"}. Set it near the top of this file's &lt;script&gt; block, see README.md.</div>`;
+  }
 
   function renderLifts(data){
     const headline = document.getElementById("liftHeadline");
@@ -473,12 +478,11 @@
 
   async function loadLifts(){
     if(!API_BASE_URL){
-      document.getElementById("liftHeadline").innerHTML =
-        `<div class="loading">Backend not connected yet — see README.md.</div>`;
+      document.getElementById("liftHeadline").innerHTML = notConnectedMessage();
       return;
     }
     try{
-      const res = await fetch(`${API_BASE_URL}/api/lifts`);
+      const res = await fetch(`${API_BASE}/api/lifts`);
       if(!res.ok) throw new Error("Lift status request failed");
       const data = await res.json();
       renderLifts(data);
@@ -576,7 +580,7 @@
     btn.textContent = "Sending…";
 
     try{
-      const res = await fetch(`${API_BASE_URL}/api/subscribe`, {
+      const res = await fetch(`${API_BASE}/api/subscribe`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email })
