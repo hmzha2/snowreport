@@ -111,25 +111,36 @@ fire more reliably too.
 3. Visit your live site and test the signup form with your own email.
 
 ### 6. How live lift status works
-There's no public API for Falls Creek's lift status, so the backend scrapes
-their official snow report page (`fallscreek.com.au/snowreport/`) instead.
-That page only publishes an **aggregate count** — "X out of 15 Lifts Open" —
-not a named lift-by-lift breakdown, so that's what the site shows too.
+Falls Creek publishes an official JSON data feed that their own website's
+snow report page reads from — found via browser DevTools (Network tab):
 
-- `POST /api/cron/refresh-lifts` scrapes the page and caches the result
+```
+https://www.fallscreek.com.au/wp-content/uploads/FCSnowReport_2021.json
+```
+
+It includes each lift's name, operating hours, and status split into
+morning/afternoon sessions, plus an official `LastUpdate` timestamp. This
+is what the backend now reads — no HTML scraping or guessing involved.
+
+- `POST /api/cron/refresh-lifts` fetches this feed and caches the result
   (`lift-status-cache.json`). Point cron-job.org at this every 15 minutes
   (step 4) to keep it fresh.
 - `GET /api/lifts` — what the website and emails actually read from —
   serves that cached value instantly. If the cache is missing or older
-  than an hour (e.g. the cron job isn't set up yet), it scrapes fresh on
+  than an hour (e.g. the cron job isn't set up yet), it fetches fresh on
   the spot instead of showing nothing.
+- The headline "X of Y open" number picks whichever session (morning/
+  afternoon) matches the current time in Melbourne; the per-lift list
+  below it always shows both sessions, so nothing is hidden by that
+  guess.
 
-**Fragility note:** this works by looking for the text pattern "X out of Y
-Lifts Open" on Falls Creek's page. If they redesign that page, the scraper
-could stop finding a match — `/api/lifts` will return an error in that
-case rather than showing stale or made-up data, and the website will show
-a friendly fallback message with a link to the official report. Worth
-checking on this occasionally during the season.
+**Fragility note:** this URL isn't a published/documented API — it's the
+internal data file Falls Creek's own site happens to use. If they ever
+restructure their site (e.g. rename the file, change its shape, or move
+to a different report system), this will need to be found again the same
+way (DevTools → Network tab → look for the JSON request) and the
+`FALLS_CREEK_JSON_URL` constant near the top of `server.js` updated.
+Worth a quick check if lift status ever looks stuck or wrong.
 
 ---
 

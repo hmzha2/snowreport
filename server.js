@@ -10,19 +10,15 @@
 //           point a free external scheduler (cron-job.org) at. This is
 //           the one that matters if you deploy somewhere that "sleeps"
 //           when idle (e.g. a free web service tier).
-//   3. Keeps a near-real-time lift status by periodically scraping
-//      Falls Creek's official snow report page:
+//   3. Keeps a near-real-time lift status by periodically pulling Falls
+//      Creek's own official snow report data feed (a JSON file they
+//      publish and update themselves — see FALLS_CREEK_JSON_URL below):
 //        a) POST /api/cron/refresh-lifts — secret-protected endpoint,
 //           point a free external scheduler at this too (e.g. every
 //           15 minutes) to keep the cached value fresh.
 //        b) GET /api/lifts — serves the cached value instantly. If the
-//           cache is missing or very stale, it scrapes fresh before
+//           cache is missing or very stale, it fetches fresh before
 //           responding, so it's never completely empty.
-//
-//      Note: Falls Creek's site only publishes an aggregate count
-//      ("X out of 15 Lifts Open"), not a named per-lift breakdown, so
-//      that's what's scraped. If Falls Creek changes their page layout,
-//      the scraper may need a small update — see scrapeLiftStatus().
 //
 // Storage: simple JSON files (subscribers.json, lift-status-cache.json).
 // Fine for a personal project / small list. If you outgrow it, swap the
@@ -50,7 +46,7 @@ const UNSUBSCRIBE_BASE_URL = process.env.UNSUBSCRIBE_BASE_URL || `http://localho
 const SUBSCRIBERS_FILE = path.join(__dirname, "subscribers.json");
 const LIFT_CACHE_FILE = path.join(__dirname, "lift-status-cache.json");
 
-// How stale the cache can get before GET /api/lifts scrapes fresh
+// How stale the cache can get before GET /api/lifts fetches fresh
 // instead of serving the cached value. The cron job (every ~15 min,
 // see README) normally keeps it much fresher than this — this is
 // just a safety net if the cron job isn't set up yet or missed a run.
@@ -59,7 +55,13 @@ const LIFT_CACHE_MAX_AGE_MS = 60 * 60 * 1000; // 1 hour
 // Falls Creek Alpine Resort, VIC, Australia
 const LAT = -36.8768;
 const LON = 147.2802;
-const SNOW_REPORT_URL = "https://www.fallscreek.com.au/snowreport/";
+const SNOW_REPORT_PAGE_URL = "https://www.fallscreek.com.au/snowreport/";
+
+// Falls Creek's own official data feed — the same JSON their website's
+// snow report page reads from client-side. Found via browser DevTools
+// (Network tab) rather than published anywhere, so if Falls Creek ever
+// renames/moves this file, this URL will need updating.
+const FALLS_CREEK_JSON_URL = "https://www.fallscreek.com.au/wp-content/uploads/FCSnowReport_2021.json";
 
 // ---------------------------------------------------------------
 // Storage helpers
@@ -93,36 +95,53 @@ async function saveLiftCache(data) {
 }
 
 // ---------------------------------------------------------------
-// Lift status — scraped from Falls Creek's official snow report page
+// Lift status — pulled from Falls Creek's own official JSON feed
 // ---------------------------------------------------------------
-async function scrapeLiftStatus() {
-  const res = await fetch(SNOW_REPORT_URL, {
+function currentSession() {
+  // Falls Creek's feed reports status as two sessions per lift
+  // (morning / afternoon) rather than one live status. This is a
+  // simple midday split to decide which one is "current" for the
+  // headline number — both are still shown per-lift in the detail list.
+  const hour = parseInt(
+    new Intl.DateTimeFormat("en-AU", { hour: "numeric", hour12: false, timeZone: TIMEZONE }).format(new Date()),
+    10
+  );
+  return hour < 12 ? "morning" : "afternoon";
+}
+
+async function fetchLiftStatus() {
+  const res = await fetch(FALLS_CREEK_JSON_URL, {
     headers: { "User-Agent": "Mozilla/5.0 (compatible; FallsCreekReportBot/1.0)" },
   });
-  if (!res.ok) throw new Error(`Snow report page request failed: ${res.status}`);
-  const html = await res.text();
+  if (!res.ok) throw new Error(`Falls Creek data feed request failed: ${res.status}`);
+  const data = await res.json();
 
-  // Strip tags to plain text so this survives minor markup changes,
-  // then look for the pattern "<number> out of <number> Lifts Open".
-  const text = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
-  const match = text.match(/(\d+)\s+out of\s+(\d+)\s+Lifts?\s+Open/i);
+  const liftsRaw = (data.Lifts && data.Lifts.Lift) || [];
+  const lifts = liftsRaw.map((l) => ({
+    name: l.LiftName,
+    detail: l.LiftDetail || "",
+    statusMorning: (l.LiftStatusMorning || "").toLowerCase(),
+    statusAfternoon: (l.LiftStatusAfternoon || "").toLowerCase(),
+  }));
 
-  if (!match) {
-    throw new Error("Couldn't find lift status on the page — Falls Creek may have changed their page layout.");
-  }
+  const session = currentSession();
+  const openNow = lifts.filter((l) => (session === "morning" ? l.statusMorning : l.statusAfternoon) === "open").length;
 
   return {
-    open: parseInt(match[1], 10),
-    total: parseInt(match[2], 10),
-    lastChecked: new Date().toISOString(),
-    source: SNOW_REPORT_URL,
+    open: openNow,
+    total: lifts.length,
+    session,
+    lifts,
+    dataLastUpdated: data.LastUpdate || null, // Falls Creek's own "as of" timestamp
+    lastChecked: new Date().toISOString(), // when *we* last fetched it
+    source: SNOW_REPORT_PAGE_URL,
   };
 }
 
 async function refreshLiftCache() {
-  const status = await scrapeLiftStatus();
+  const status = await fetchLiftStatus();
   await saveLiftCache(status);
-  console.log(`Lift status refreshed: ${status.open}/${status.total} open`);
+  console.log(`Lift status refreshed: ${status.open}/${status.total} open (${status.session} session)`);
   return status;
 }
 
@@ -131,14 +150,14 @@ async function getLiftStatus() {
   const isStale = !cached || Date.now() - new Date(cached.lastChecked).getTime() > LIFT_CACHE_MAX_AGE_MS;
 
   if (!cached) {
-    // Never scraped before — do it now so the endpoint isn't empty.
+    // Never fetched before — do it now so the endpoint isn't empty.
     return refreshLiftCache();
   }
 
   if (isStale) {
     // Serve the stale value immediately, but kick off a background
     // refresh so the *next* request gets a fresh one. Keeps responses
-    // fast even if a scrape is slow or the cron job missed a run.
+    // fast even if a fetch is slow or the cron job missed a run.
     refreshLiftCache().catch((err) => console.error("Background lift refresh failed:", err.message));
   }
 
@@ -197,11 +216,27 @@ function buildReportHtml({ weather, lifts, isWelcome, email }) {
     })
     .join("");
 
-  const liftCheckedTime = new Date(lifts.lastChecked).toLocaleTimeString("en-AU", {
-    hour: "2-digit",
-    minute: "2-digit",
-    timeZone: TIMEZONE,
-  });
+  const liftRows = lifts.lifts
+    .map((l) => {
+      const amColor = l.statusMorning === "open" ? "#2b8a5e" : "#c0392b";
+      const pmColor = l.statusAfternoon === "open" ? "#2b8a5e" : "#c0392b";
+      return `<tr>
+        <td style="padding:5px 10px;font-size:13px;">${l.name}</td>
+        <td style="padding:5px 10px;font-size:11px;color:${amColor};text-transform:uppercase;font-weight:600;">AM ${l.statusMorning || "—"}</td>
+        <td style="padding:5px 10px;font-size:11px;color:${pmColor};text-transform:uppercase;font-weight:600;">PM ${l.statusAfternoon || "—"}</td>
+      </tr>`;
+    })
+    .join("");
+
+  const dataAsOf = lifts.dataLastUpdated
+    ? new Date(lifts.dataLastUpdated.replace(" ", "T") + "Z").toLocaleString("en-AU", {
+        timeZone: TIMEZONE,
+        day: "numeric",
+        month: "short",
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : "unknown";
 
   const unsubscribeUrl = `${UNSUBSCRIBE_BASE_URL}/api/unsubscribe?email=${encodeURIComponent(email)}`;
 
@@ -216,11 +251,10 @@ function buildReportHtml({ weather, lifts, isWelcome, email }) {
       <p style="margin:6px 0 0;font-size:13px;color:#9FB3C8;">New snow today: ${todaySnow.toFixed(1)} cm</p>
     </div>
 
-    <div style="background:#16263D;border-radius:10px;padding:16px 18px;margin-bottom:18px;">
-      <p style="margin:0;font-size:13px;color:#9FB3C8;">LIFT STATUS</p>
-      <p style="margin:6px 0 0;font-size:20px;">${lifts.open} of ${lifts.total} lifts open</p>
-      <p style="margin:6px 0 0;font-size:12px;color:#6b7d92;">as of ${liftCheckedTime} · source: fallscreek.com.au</p>
-    </div>
+    <p style="font-size:13px;color:#9FB3C8;margin:0 0 6px;">LIFT STATUS — ${lifts.open}/${lifts.total} open (${lifts.session} session) · Falls Creek data as of ${dataAsOf}</p>
+    <table style="width:100%;border-collapse:collapse;background:#16263D;border-radius:10px;overflow:hidden;margin-bottom:18px;">
+      ${liftRows}
+    </table>
 
     <p style="font-size:13px;color:#9FB3C8;margin:0 0 6px;">14-DAY OUTLOOK</p>
     <table style="width:100%;border-collapse:collapse;background:#16263D;border-radius:10px;overflow:hidden;margin-bottom:18px;">

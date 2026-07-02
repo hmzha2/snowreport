@@ -182,8 +182,12 @@
     border: 1px solid rgba(255,255,255,0.06);
     border-radius: 10px;
     padding: 13px 16px;
+    gap: 10px;
   }
+  .lift-row .name-wrap{ display:flex; flex-direction:column; min-width:0; }
   .lift-row .name{ font-size: 14px; font-weight:500; }
+  .lift-row .hours{ font-size: 11px; color: var(--frost); margin-top: 2px; }
+  .lift-row .badges{ display:flex; gap: 6px; flex-shrink:0; }
   .badge{
     font-family:'JetBrains Mono', monospace;
     font-size: 11px;
@@ -377,9 +381,10 @@
   <!-- LIFT STATUS -->
   <section id="lifts">
     <div class="section-title"><span class="num mono">03</span><h2>Lift status</h2></div>
-    <div id="liftStatus" class="loading">Loading lift status…</div>
+    <div id="liftHeadline" class="loading">Loading lift status…</div>
+    <div id="liftList" class="lift-list"></div>
     <a class="official-link" href="https://www.fallscreek.com.au/snowreport/" target="_blank" rel="noopener">
-      → Official live snow report on fallscreek.com.au
+      → Official snow report on fallscreek.com.au
     </a>
   </section>
 
@@ -431,24 +436,44 @@
     return "❄️";
   };
 
-  function renderLiftStatus(data){
-    const el = document.getElementById("liftStatus");
+  function renderLifts(data){
+    const headline = document.getElementById("liftHeadline");
+    const list = document.getElementById("liftList");
+
     if(!data){
-      el.innerHTML = `<div class="loading">Couldn't load lift status right now. Check the <a href="https://www.fallscreek.com.au/snowreport/" target="_blank" rel="noopener">official snow report</a>.</div>`;
+      headline.innerHTML = `<div class="loading">Couldn't load lift status right now. Check the <a href="https://www.fallscreek.com.au/snowreport/" target="_blank" rel="noopener">official snow report</a>.</div>`;
+      list.innerHTML = "";
       return;
     }
-    const checked = new Date(data.lastChecked).toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit" });
-    el.innerHTML = `
+
+    const asOf = data.dataLastUpdated
+      ? new Date(data.dataLastUpdated.replace(" ", "T") + "Z").toLocaleString("en-AU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })
+      : "unknown";
+
+    headline.innerHTML = `
       <div class="lift-status-card">
-        <div class="big">${data.open}<span class="of">&nbsp;/&nbsp;${data.total} lifts open</span></div>
+        <div class="big">${data.open}<span class="of">&nbsp;/&nbsp;${data.total} open — ${data.session} session</span></div>
       </div>
-      <div class="checked">Last checked ${checked} · source: Falls Creek official snow report</div>
+      <div class="checked">Falls Creek data as of ${asOf} · fetched by this site ${new Date(data.lastChecked).toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit" })}</div>
     `;
+
+    list.innerHTML = data.lifts.map(l => `
+      <div class="lift-row">
+        <div class="name-wrap">
+          <span class="name">${l.name}</span>
+          <span class="hours">${l.detail}</span>
+        </div>
+        <div class="badges">
+          <span class="badge ${l.statusMorning === 'open' ? 'open' : 'closed'}">AM ${l.statusMorning || '—'}</span>
+          <span class="badge ${l.statusAfternoon === 'open' ? 'open' : 'closed'}">PM ${l.statusAfternoon || '—'}</span>
+        </div>
+      </div>
+    `).join("");
   }
 
-  async function loadLiftStatus(){
+  async function loadLifts(){
     if(!API_BASE_URL){
-      document.getElementById("liftStatus").innerHTML =
+      document.getElementById("liftHeadline").innerHTML =
         `<div class="loading">Backend not connected yet — see README.md.</div>`;
       return;
     }
@@ -456,10 +481,10 @@
       const res = await fetch(`${API_BASE_URL}/api/lifts`);
       if(!res.ok) throw new Error("Lift status request failed");
       const data = await res.json();
-      renderLiftStatus(data);
+      renderLifts(data);
     }catch(err){
       console.error(err);
-      renderLiftStatus(null);
+      renderLifts(null);
     }
   }
 
@@ -571,7 +596,7 @@
     }
   });
 
-  loadLiftStatus();
+  loadLifts();
   loadWeather();
 </script>
 
