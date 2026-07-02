@@ -10,10 +10,23 @@
 //           point a free external scheduler (cron-job.org) at. This is
 //           the one that matters if you deploy somewhere that "sleeps"
 //           when idle (e.g. a free web service tier).
+//   3. Keeps a near-real-time lift status by periodically scraping
+//      Falls Creek's official snow report page:
+//        a) POST /api/cron/refresh-lifts — secret-protected endpoint,
+//           point a free external scheduler at this too (e.g. every
+//           15 minutes) to keep the cached value fresh.
+//        b) GET /api/lifts — serves the cached value instantly. If the
+//           cache is missing or very stale, it scrapes fresh before
+//           responding, so it's never completely empty.
 //
-// Storage: a simple JSON file (subscribers.json). Fine for a personal
-// project / small list. If you outgrow it, swap saveSubscribers/
-// loadSubscribers for a hosted DB (e.g. free Supabase/Neon Postgres).
+//      Note: Falls Creek's site only publishes an aggregate count
+//      ("X out of 15 Lifts Open"), not a named per-lift breakdown, so
+//      that's what's scraped. If Falls Creek changes their page layout,
+//      the scraper may need a small update — see scrapeLiftStatus().
+//
+// Storage: simple JSON files (subscribers.json, lift-status-cache.json).
+// Fine for a personal project / small list. If you outgrow it, swap the
+// load*/save* helpers for a hosted DB (e.g. free Supabase/Neon Postgres).
 // ---------------------------------------------------------------
 
 require("dotenv").config();
@@ -35,11 +48,18 @@ const TIMEZONE = process.env.TIMEZONE || "Australia/Melbourne";
 const UNSUBSCRIBE_BASE_URL = process.env.UNSUBSCRIBE_BASE_URL || `http://localhost:${PORT}`;
 
 const SUBSCRIBERS_FILE = path.join(__dirname, "subscribers.json");
-const LIFTS_FILE = path.join(__dirname, "lifts.json");
+const LIFT_CACHE_FILE = path.join(__dirname, "lift-status-cache.json");
+
+// How stale the cache can get before GET /api/lifts scrapes fresh
+// instead of serving the cached value. The cron job (every ~15 min,
+// see README) normally keeps it much fresher than this — this is
+// just a safety net if the cron job isn't set up yet or missed a run.
+const LIFT_CACHE_MAX_AGE_MS = 60 * 60 * 1000; // 1 hour
 
 // Falls Creek Alpine Resort, VIC, Australia
 const LAT = -36.8768;
 const LON = 147.2802;
+const SNOW_REPORT_URL = "https://www.fallscreek.com.au/snowreport/";
 
 // ---------------------------------------------------------------
 // Storage helpers
@@ -58,35 +78,71 @@ async function saveSubscribers(list) {
   await fs.writeFile(SUBSCRIBERS_FILE, JSON.stringify(list, null, 2));
 }
 
-async function loadLifts() {
+async function loadLiftCache() {
   try {
-    const raw = await fs.readFile(LIFTS_FILE, "utf-8");
+    const raw = await fs.readFile(LIFT_CACHE_FILE, "utf-8");
     return JSON.parse(raw);
   } catch (err) {
-    if (err.code === "ENOENT") {
-      // Sensible defaults — edit lifts.json to update real status.
-      const defaults = [
-        { name: "Summit Chair", status: "open" },
-        { name: "Eagle Express", status: "open" },
-        { name: "Drovers Dream", status: "open" },
-        { name: "International Poma", status: "open" },
-        { name: "Lakeside Poma", status: "hold" },
-        { name: "Halley's Comet", status: "open" },
-        { name: "Ruined Castle", status: "closed" },
-        { name: "Scotts Chair", status: "open" },
-        { name: "Towers Chair", status: "hold" },
-        { name: "Gully Chair", status: "open" },
-        { name: "Monkey Bar Poma", status: "open" },
-        { name: "Mouse Trap Carpet", status: "open" },
-        { name: "Petes Train Carpet", status: "open" },
-        { name: "Boardwalk Carpet", status: "open" },
-        { name: "Snowsports School Carpet", status: "open" },
-      ];
-      await fs.writeFile(LIFTS_FILE, JSON.stringify(defaults, null, 2));
-      return defaults;
-    }
+    if (err.code === "ENOENT") return null;
     throw err;
   }
+}
+
+async function saveLiftCache(data) {
+  await fs.writeFile(LIFT_CACHE_FILE, JSON.stringify(data, null, 2));
+}
+
+// ---------------------------------------------------------------
+// Lift status — scraped from Falls Creek's official snow report page
+// ---------------------------------------------------------------
+async function scrapeLiftStatus() {
+  const res = await fetch(SNOW_REPORT_URL, {
+    headers: { "User-Agent": "Mozilla/5.0 (compatible; FallsCreekReportBot/1.0)" },
+  });
+  if (!res.ok) throw new Error(`Snow report page request failed: ${res.status}`);
+  const html = await res.text();
+
+  // Strip tags to plain text so this survives minor markup changes,
+  // then look for the pattern "<number> out of <number> Lifts Open".
+  const text = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+  const match = text.match(/(\d+)\s+out of\s+(\d+)\s+Lifts?\s+Open/i);
+
+  if (!match) {
+    throw new Error("Couldn't find lift status on the page — Falls Creek may have changed their page layout.");
+  }
+
+  return {
+    open: parseInt(match[1], 10),
+    total: parseInt(match[2], 10),
+    lastChecked: new Date().toISOString(),
+    source: SNOW_REPORT_URL,
+  };
+}
+
+async function refreshLiftCache() {
+  const status = await scrapeLiftStatus();
+  await saveLiftCache(status);
+  console.log(`Lift status refreshed: ${status.open}/${status.total} open`);
+  return status;
+}
+
+async function getLiftStatus() {
+  const cached = await loadLiftCache();
+  const isStale = !cached || Date.now() - new Date(cached.lastChecked).getTime() > LIFT_CACHE_MAX_AGE_MS;
+
+  if (!cached) {
+    // Never scraped before — do it now so the endpoint isn't empty.
+    return refreshLiftCache();
+  }
+
+  if (isStale) {
+    // Serve the stale value immediately, but kick off a background
+    // refresh so the *next* request gets a fresh one. Keeps responses
+    // fast even if a scrape is slow or the cron job missed a run.
+    refreshLiftCache().catch((err) => console.error("Background lift refresh failed:", err.message));
+  }
+
+  return cached;
 }
 
 // ---------------------------------------------------------------
@@ -120,7 +176,6 @@ function weatherEmoji(code) {
 // Report HTML
 // ---------------------------------------------------------------
 function buildReportHtml({ weather, lifts, isWelcome, email }) {
-  const openCount = lifts.filter((l) => l.status === "open").length;
   const current = weather.current;
   const todaySnow = weather.daily.snowfall_sum[0];
 
@@ -142,15 +197,11 @@ function buildReportHtml({ weather, lifts, isWelcome, email }) {
     })
     .join("");
 
-  const liftRows = lifts
-    .map((l) => {
-      const color = l.status === "open" ? "#2b8a5e" : l.status === "hold" ? "#b8860b" : "#c0392b";
-      return `<tr>
-        <td style="padding:5px 10px;font-size:13px;">${l.name}</td>
-        <td style="padding:5px 10px;font-size:12px;color:${color};text-transform:uppercase;font-weight:600;">${l.status}</td>
-      </tr>`;
-    })
-    .join("");
+  const liftCheckedTime = new Date(lifts.lastChecked).toLocaleTimeString("en-AU", {
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: TIMEZONE,
+  });
 
   const unsubscribeUrl = `${UNSUBSCRIBE_BASE_URL}/api/unsubscribe?email=${encodeURIComponent(email)}`;
 
@@ -165,10 +216,11 @@ function buildReportHtml({ weather, lifts, isWelcome, email }) {
       <p style="margin:6px 0 0;font-size:13px;color:#9FB3C8;">New snow today: ${todaySnow.toFixed(1)} cm</p>
     </div>
 
-    <p style="font-size:13px;color:#9FB3C8;margin:0 0 6px;">LIFT STATUS — ${openCount}/${lifts.length} open</p>
-    <table style="width:100%;border-collapse:collapse;background:#16263D;border-radius:10px;overflow:hidden;margin-bottom:18px;">
-      ${liftRows}
-    </table>
+    <div style="background:#16263D;border-radius:10px;padding:16px 18px;margin-bottom:18px;">
+      <p style="margin:0;font-size:13px;color:#9FB3C8;">LIFT STATUS</p>
+      <p style="margin:6px 0 0;font-size:20px;">${lifts.open} of ${lifts.total} lifts open</p>
+      <p style="margin:6px 0 0;font-size:12px;color:#6b7d92;">as of ${liftCheckedTime} · source: fallscreek.com.au</p>
+    </div>
 
     <p style="font-size:13px;color:#9FB3C8;margin:0 0 6px;">14-DAY OUTLOOK</p>
     <table style="width:100%;border-collapse:collapse;background:#16263D;border-radius:10px;overflow:hidden;margin-bottom:18px;">
@@ -208,7 +260,7 @@ async function sendEmail({ to, subject, html }) {
 }
 
 async function sendReportTo(email, isWelcome) {
-  const [weather, lifts] = await Promise.all([getWeather(), loadLifts()]);
+  const [weather, lifts] = await Promise.all([getWeather(), getLiftStatus()]);
   const html = buildReportHtml({ weather, lifts, isWelcome, email });
   await sendEmail({
     to: email,
@@ -223,7 +275,7 @@ async function sendDailyReportToAll() {
     console.log("No subscribers, skipping daily send.");
     return;
   }
-  const [weather, lifts] = await Promise.all([getWeather(), loadLifts()]);
+  const [weather, lifts] = await Promise.all([getWeather(), getLiftStatus()]);
   console.log(`Sending daily report to ${subscribers.length} subscriber(s)...`);
   for (const email of subscribers) {
     try {
@@ -241,7 +293,12 @@ async function sendDailyReportToAll() {
 app.get("/api/health", (req, res) => res.json({ ok: true }));
 
 app.get("/api/lifts", async (req, res) => {
-  res.json(await loadLifts());
+  try {
+    res.json(await getLiftStatus());
+  } catch (err) {
+    console.error("Lift status fetch failed:", err.message);
+    res.status(502).json({ error: "Couldn't retrieve lift status right now." });
+  }
 });
 
 app.post("/api/subscribe", async (req, res) => {
@@ -293,12 +350,38 @@ app.post("/api/cron/send-daily", async (req, res) => {
   }
 });
 
+// Secret-protected endpoint for an external scheduler to keep the lift
+// status cache fresh (recommended: every 15 minutes — see README).
+app.post("/api/cron/refresh-lifts", async (req, res) => {
+  if (req.headers["x-cron-secret"] !== CRON_SECRET) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  try {
+    const status = await refreshLiftCache();
+    res.json({ ok: true, ...status });
+  } catch (err) {
+    console.error("Lift refresh failed:", err.message);
+    res.status(502).json({ error: err.message });
+  }
+});
+
 // Internal cron — fires automatically if this process stays running 24/7.
 cron.schedule(
   "0 8 * * *",
   () => {
     console.log("Internal cron: running 8am daily send...");
     sendDailyReportToAll().catch((err) => console.error("Daily send failed:", err));
+  },
+  { timezone: TIMEZONE }
+);
+
+// Internal cron backup for lift status — fires every 15 minutes if this
+// process stays running 24/7. The external cron-job.org trigger (see
+// README) is still recommended since free hosting tiers can sleep.
+cron.schedule(
+  "*/15 * * * *",
+  () => {
+    refreshLiftCache().catch((err) => console.error("Internal lift refresh failed:", err.message));
   },
   { timezone: TIMEZONE }
 );

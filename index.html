@@ -196,11 +196,38 @@
   .badge.hold{ background: rgba(232,176,74,0.14); color: var(--hold); }
   .badge.closed{ background: rgba(232,106,106,0.14); color: var(--closed); }
   .lift-summary{ color: var(--frost); font-size: 14px; margin-bottom: 18px; }
+  .lift-status-card{
+    display:flex;
+    align-items:baseline;
+    gap: 14px;
+    background: var(--panel);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: var(--radius);
+    padding: 22px 24px;
+    margin-bottom: 6px;
+    flex-wrap: wrap;
+  }
+  .lift-status-card .big{
+    font-family:'Archivo Expanded', sans-serif;
+    font-weight: 800;
+    font-size: 40px;
+  }
+  .lift-status-card .big .of{
+    font-size: 18px;
+    color: var(--frost);
+    font-weight: 500;
+    font-family: 'Inter', sans-serif;
+  }
+  .lift-status-card .checked{
+    font-family:'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--frost);
+  }
   .official-link{
     display:inline-flex; align-items:center; gap:6px;
     font-family:'JetBrains Mono', monospace;
     font-size: 12px;
-    margin-top: 20px;
+    margin-top: 14px;
   }
 
   /* ---------- Email signup ---------- */
@@ -350,10 +377,9 @@
   <!-- LIFT STATUS -->
   <section id="lifts">
     <div class="section-title"><span class="num mono">03</span><h2>Lift status</h2></div>
-    <div id="liftSummary" class="lift-summary"></div>
-    <div id="liftList" class="lift-list"></div>
+    <div id="liftStatus" class="loading">Loading lift status…</div>
     <a class="official-link" href="https://www.fallscreek.com.au/snowreport/" target="_blank" rel="noopener">
-      → Official live lift status on fallscreek.com.au
+      → Official live snow report on fallscreek.com.au
     </a>
   </section>
 
@@ -384,32 +410,14 @@
   // ============================================================
   // Point this at your deployed backend (see README.md) once it's live.
   // Example: "https://your-app.onrender.com"
-  const API_BASE_URL = "https://snowreport.onrender.com/"; // <-- set this after deploying server.js
+  const API_BASE_URL = ""; // <-- set this after deploying server.js
 
   // Falls Creek Alpine Resort, VIC, Australia
   const LAT = -36.8768;
   const LON = 147.2802;
 
-  // Edit this list to reflect real-time lift status. In production, wire this
-  // up to your backend (server.js exposes lift data too) so it can be updated
-  // without redeploying the site.
-  const LIFTS = [
-    { name: "Summit Chair", status: "open" },
-    { name: "Eagle Express", status: "open" },
-    { name: "Drovers Dream", status: "open" },
-    { name: "International Poma", status: "open" },
-    { name: "Lakeside Poma", status: "hold" },
-    { name: "Halley's Comet", status: "open" },
-    { name: "Ruined Castle", status: "closed" },
-    { name: "Scotts Chair", status: "open" },
-    { name: "Towers Chair", status: "hold" },
-    { name: "Gully Chair", status: "open" },
-    { name: "Monkey Bar Poma", status: "open" },
-    { name: "Mouse Trap Carpet", status: "open" },
-    { name: "Petes Train Carpet", status: "open" },
-    { name: "Boardwalk Carpet", status: "open" },
-    { name: "Snowsports School Carpet", status: "open" },
-  ];
+  // Lift status is fetched live from the backend, which scrapes Falls
+  // Creek's official snow report page and caches it. See server.js.
 
   const WEATHER_ICON = (code) => {
     if ([0].includes(code)) return "☀️";
@@ -423,16 +431,36 @@
     return "❄️";
   };
 
-  function renderLifts(){
-    const open = LIFTS.filter(l => l.status === "open").length;
-    document.getElementById("liftSummary").textContent =
-      `${open} of ${LIFTS.length} lifts spinning right now`;
-    document.getElementById("liftList").innerHTML = LIFTS.map(l => `
-      <div class="lift-row">
-        <span class="name">${l.name}</span>
-        <span class="badge ${l.status}">${l.status}</span>
+  function renderLiftStatus(data){
+    const el = document.getElementById("liftStatus");
+    if(!data){
+      el.innerHTML = `<div class="loading">Couldn't load lift status right now. Check the <a href="https://www.fallscreek.com.au/snowreport/" target="_blank" rel="noopener">official snow report</a>.</div>`;
+      return;
+    }
+    const checked = new Date(data.lastChecked).toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit" });
+    el.innerHTML = `
+      <div class="lift-status-card">
+        <div class="big">${data.open}<span class="of">&nbsp;/&nbsp;${data.total} lifts open</span></div>
       </div>
-    `).join("");
+      <div class="checked">Last checked ${checked} · source: Falls Creek official snow report</div>
+    `;
+  }
+
+  async function loadLiftStatus(){
+    if(!API_BASE_URL){
+      document.getElementById("liftStatus").innerHTML =
+        `<div class="loading">Backend not connected yet — see README.md.</div>`;
+      return;
+    }
+    try{
+      const res = await fetch(`${API_BASE_URL}/api/lifts`);
+      if(!res.ok) throw new Error("Lift status request failed");
+      const data = await res.json();
+      renderLiftStatus(data);
+    }catch(err){
+      console.error(err);
+      renderLiftStatus(null);
+    }
   }
 
   async function loadWeather(){
@@ -543,7 +571,7 @@
     }
   });
 
-  renderLifts();
+  loadLiftStatus();
   loadWeather();
 </script>
 
