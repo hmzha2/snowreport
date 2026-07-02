@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Falls Creek — Snow &amp; Lift Report</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Expanded:wght@600;800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --night: #0F1B2D;
+    --panel: #16263D;
+    --panel-2: #1D3049;
+    --snow: #F5F8FA;
+    --frost: #9FB3C8;
+    --ice: #7DD8E8;
+    --alpenglow: #E8804A;
+    --alpenglow-dim: rgba(232,128,74,0.15);
+    --open: #6FCF97;
+    --hold: #E8B04A;
+    --closed: #E86A6A;
+    --radius: 14px;
+  }
+  *{ box-sizing: border-box; margin:0; padding:0; }
+  html{ scroll-behavior: smooth; }
+  body{
+    background: var(--night);
+    color: var(--snow);
+    font-family: 'Inter', sans-serif;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+  .mono{ font-family: 'JetBrains Mono', monospace; }
+  .display{ font-family: 'Archivo Expanded', sans-serif; }
+  a{ color: var(--ice); }
+
+  /* ---------- Layout shell ---------- */
+  .wrap{ max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+
+  /* ---------- Header / ridge ---------- */
+  header{
+    position: relative;
+    padding-top: 56px;
+    padding-bottom: 0;
+    background: linear-gradient(180deg, #0A1420 0%, var(--night) 100%);
+    overflow: hidden;
+  }
+  .eyebrow{
+    font-family:'JetBrains Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--ice);
+    display:flex;
+    align-items:center;
+    gap:10px;
+  }
+  .eyebrow::before{
+    content:"";
+    width:7px; height:7px; border-radius:50%;
+    background: var(--open);
+    box-shadow: 0 0 8px var(--open);
+    display:inline-block;
+  }
+  h1{
+    font-family:'Archivo Expanded', sans-serif;
+    font-weight: 800;
+    font-size: clamp(34px, 6vw, 58px);
+    line-height: 1.02;
+    margin-top: 14px;
+    letter-spacing: -0.01em;
+  }
+  .sub{
+    color: var(--frost);
+    font-size: 16px;
+    margin-top: 14px;
+    max-width: 520px;
+  }
+  .ridge-svg{ display:block; width:100%; height:auto; margin-top: 44px; }
+  .lift-dot{ transition: filter .2s; }
+  .lift-dot:hover{ filter: brightness(1.3); }
+
+  /* ---------- Section titles ---------- */
+  .section-title{
+    display:flex; align-items:baseline; gap:12px;
+    margin-bottom: 22px;
+  }
+  .section-title .num{
+    font-family:'JetBrains Mono', monospace;
+    color: var(--alpenglow);
+    font-size: 13px;
+  }
+  .section-title h2{
+    font-family:'Archivo Expanded', sans-serif;
+    font-weight:700;
+    font-size: 22px;
+    letter-spacing: -0.01em;
+  }
+
+  section{ padding: 64px 0; border-top: 1px solid rgba(255,255,255,0.06); }
+
+  /* ---------- Current conditions ---------- */
+  .conditions-grid{
+    display:grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 14px;
+  }
+  .stat-card{
+    background: var(--panel);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: var(--radius);
+    padding: 20px 18px;
+  }
+  .stat-card .label{
+    font-family:'JetBrains Mono', monospace;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--frost);
+  }
+  .stat-card .value{
+    font-family:'Archivo Expanded', sans-serif;
+    font-weight: 800;
+    font-size: 32px;
+    margin-top: 8px;
+  }
+  .stat-card .value .unit{
+    font-size: 15px;
+    color: var(--frost);
+    font-weight: 500;
+    font-family: 'Inter', sans-serif;
+    margin-left: 3px;
+  }
+
+  /* ---------- Forecast ---------- */
+  .forecast-scroll{
+    display:flex;
+    gap: 10px;
+    overflow-x: auto;
+    padding-bottom: 8px;
+    scrollbar-width: thin;
+  }
+  .fc-card{
+    flex: 0 0 auto;
+    width: 108px;
+    background: var(--panel);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: var(--radius);
+    padding: 14px 12px;
+    text-align:center;
+  }
+  .fc-card .day{
+    font-family:'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--ice);
+    text-transform: uppercase;
+  }
+  .fc-card .date{ font-size: 11px; color: var(--frost); margin-top:2px; }
+  .fc-card .icon{ font-size: 26px; margin: 10px 0 6px; }
+  .fc-card .temps{ font-size: 13px; }
+  .fc-card .temps .max{ font-weight:600; }
+  .fc-card .temps .min{ color: var(--frost); }
+  .fc-card .snow{
+    margin-top: 8px;
+    font-family:'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--open);
+  }
+  .fc-card .snow.none{ color: var(--frost); opacity: 0.6; }
+
+  /* ---------- Lifts ---------- */
+  .lift-list{
+    display:grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 10px;
+  }
+  .lift-row{
+    display:flex; align-items:center; justify-content:space-between;
+    background: var(--panel);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 10px;
+    padding: 13px 16px;
+  }
+  .lift-row .name{ font-size: 14px; font-weight:500; }
+  .badge{
+    font-family:'JetBrains Mono', monospace;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 4px 10px;
+    border-radius: 20px;
+  }
+  .badge.open{ background: rgba(111,207,151,0.14); color: var(--open); }
+  .badge.hold{ background: rgba(232,176,74,0.14); color: var(--hold); }
+  .badge.closed{ background: rgba(232,106,106,0.14); color: var(--closed); }
+  .lift-summary{ color: var(--frost); font-size: 14px; margin-bottom: 18px; }
+  .official-link{
+    display:inline-flex; align-items:center; gap:6px;
+    font-family:'JetBrains Mono', monospace;
+    font-size: 12px;
+    margin-top: 20px;
+  }
+
+  /* ---------- Email signup ---------- */
+  .signup-panel{
+    background: linear-gradient(135deg, var(--panel-2), var(--panel));
+    border: 1px solid rgba(232,128,74,0.25);
+    border-radius: 20px;
+    padding: 40px clamp(20px, 5vw, 48px);
+    position: relative;
+    overflow: hidden;
+  }
+  .signup-panel::before{
+    content:"";
+    position:absolute; right:-60px; top:-60px;
+    width: 220px; height:220px; border-radius:50%;
+    background: var(--alpenglow-dim);
+    filter: blur(10px);
+  }
+  .signup-panel h2{
+    font-family:'Archivo Expanded', sans-serif;
+    font-size: clamp(22px, 3vw, 30px);
+    font-weight: 800;
+    max-width: 460px;
+    position:relative;
+  }
+  .signup-panel p{
+    color: var(--frost);
+    margin-top: 12px;
+    max-width: 440px;
+    position:relative;
+  }
+  .signup-form{
+    display:flex;
+    gap: 10px;
+    margin-top: 26px;
+    max-width: 460px;
+    position:relative;
+    flex-wrap: wrap;
+  }
+  .signup-form input[type=email]{
+    flex: 1 1 240px;
+    background: var(--night);
+    border: 1px solid rgba(255,255,255,0.12);
+    color: var(--snow);
+    padding: 14px 16px;
+    border-radius: 10px;
+    font-size: 15px;
+    font-family: 'Inter', sans-serif;
+  }
+  .signup-form input[type=email]:focus{
+    outline: 2px solid var(--ice);
+    outline-offset: 1px;
+  }
+  .signup-form button{
+    background: var(--alpenglow);
+    color: var(--night);
+    border: none;
+    padding: 14px 22px;
+    border-radius: 10px;
+    font-weight: 700;
+    font-size: 15px;
+    cursor: pointer;
+    font-family: 'Inter', sans-serif;
+    transition: transform .15s, background .15s;
+  }
+  .signup-form button:hover{ background: #f0925f; transform: translateY(-1px); }
+  .signup-form button:active{ transform: translateY(0); }
+  .signup-form button:disabled{ opacity: 0.6; cursor: default; transform:none; }
+  .form-msg{
+    margin-top: 14px;
+    font-size: 13px;
+    font-family: 'JetBrains Mono', monospace;
+    position:relative;
+  }
+  .form-msg.ok{ color: var(--open); }
+  .form-msg.err{ color: var(--closed); }
+  .fine-print{
+    font-size: 12px;
+    color: var(--frost);
+    opacity: 0.7;
+    margin-top: 16px;
+    position: relative;
+  }
+
+  footer{
+    padding: 40px 0 60px;
+    color: var(--frost);
+    font-size: 13px;
+    text-align:center;
+  }
+  footer a{ color: var(--frost); text-decoration: underline; }
+
+  .loading{ color: var(--frost); font-family:'JetBrains Mono', monospace; font-size: 13px; }
+
+  @media (prefers-reduced-motion: reduce){
+    html{ scroll-behavior: auto; }
+    *{ transition: none !important; animation: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <div class="eyebrow">Falls Creek Alpine Resort · Live-ish conditions</div>
+    <h1>Snow &amp; lift<br>report.</h1>
+    <p class="sub">Everything you need before you drive up the mountain — current conditions, a 14&#8209;day outlook, and which lifts are actually spinning. Get it in your inbox every morning at 8am.</p>
+  </div>
+
+  <svg class="ridge-svg" viewBox="0 0 1080 200" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <linearGradient id="ridgeFill" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#22364F"/>
+        <stop offset="100%" stop-color="#16263D"/>
+      </linearGradient>
+    </defs>
+    <path d="M0,160 L90,95 L180,140 L260,60 L340,120 L430,40 L520,110 L610,70 L700,150 L790,90 L880,130 L960,55 L1080,120 L1080,200 L0,200 Z" fill="url(#ridgeFill)"/>
+    <path d="M0,160 L90,95 L180,140 L260,60 L340,120 L430,40 L520,110 L610,70 L700,150 L790,90 L880,130 L960,55 L1080,120" fill="none" stroke="rgba(125,216,232,0.35)" stroke-width="2"/>
+    <!-- lift markers along the ridge -->
+    <circle class="lift-dot" cx="180" cy="140" r="5" fill="#6FCF97"/>
+    <circle class="lift-dot" cx="340" cy="120" r="5" fill="#6FCF97"/>
+    <circle class="lift-dot" cx="430" cy="40" r="5" fill="#E8B04A"/>
+    <circle class="lift-dot" cx="610" cy="70" r="5" fill="#6FCF97"/>
+    <circle class="lift-dot" cx="790" cy="90" r="5" fill="#E86A6A"/>
+    <circle class="lift-dot" cx="960" cy="55" r="5" fill="#6FCF97"/>
+  </svg>
+</header>
+
+<main class="wrap">
+
+  <!-- CURRENT CONDITIONS -->
+  <section id="conditions">
+    <div class="section-title"><span class="num mono">01</span><h2>Current conditions</h2></div>
+    <div id="conditionsGrid" class="conditions-grid">
+      <div class="loading">Loading live conditions…</div>
+    </div>
+  </section>
+
+  <!-- 14-DAY FORECAST -->
+  <section id="forecast">
+    <div class="section-title"><span class="num mono">02</span><h2>14&#8209;day outlook</h2></div>
+    <div id="forecastScroll" class="forecast-scroll">
+      <div class="loading">Loading forecast…</div>
+    </div>
+  </section>
+
+  <!-- LIFT STATUS -->
+  <section id="lifts">
+    <div class="section-title"><span class="num mono">03</span><h2>Lift status</h2></div>
+    <div id="liftSummary" class="lift-summary"></div>
+    <div id="liftList" class="lift-list"></div>
+    <a class="official-link" href="https://www.fallscreek.com.au/snowreport/" target="_blank" rel="noopener">
+      → Official live lift status on fallscreek.com.au
+    </a>
+  </section>
+
+  <!-- EMAIL SIGNUP -->
+  <section id="signup">
+    <div class="signup-panel">
+      <h2>Get the report before your coffee's ready.</h2>
+      <p>Drop your email in and we'll send today's snow &amp; lift report right away, then again every morning at 8am — so you know before you've left the house.</p>
+      <form id="signupForm" class="signup-form">
+        <input type="email" id="emailInput" placeholder="you@example.com" required autocomplete="email">
+        <button type="submit" id="signupBtn">Send me reports</button>
+      </form>
+      <div id="formMsg" class="form-msg"></div>
+      <div class="fine-print">One email a day. Unsubscribe link included in every report.</div>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  Not an official Falls Creek Alpine Resort service. Forecast data via Open&#8209;Meteo.
+  Verify lift &amp; road conditions at <a href="https://www.fallscreek.com.au" target="_blank" rel="noopener">fallscreek.com.au</a> before you travel.
+</footer>
+
+<script>
+  // ============================================================
+  // CONFIG
+  // ============================================================
+  // Point this at your deployed backend (see README.md) once it's live.
+  // Example: "https://your-app.onrender.com"
+  const API_BASE_URL = "https://snowreport.onrender.com/"; // <-- set this after deploying server.js
+
+  // Falls Creek Alpine Resort, VIC, Australia
+  const LAT = -36.8768;
+  const LON = 147.2802;
+
+  // Edit this list to reflect real-time lift status. In production, wire this
+  // up to your backend (server.js exposes lift data too) so it can be updated
+  // without redeploying the site.
+  const LIFTS = [
+    { name: "Summit Chair", status: "open" },
+    { name: "Eagle Express", status: "open" },
+    { name: "Drovers Dream", status: "open" },
+    { name: "International Poma", status: "open" },
+    { name: "Lakeside Poma", status: "hold" },
+    { name: "Halley's Comet", status: "open" },
+    { name: "Ruined Castle", status: "closed" },
+    { name: "Scotts Chair", status: "open" },
+    { name: "Towers Chair", status: "hold" },
+    { name: "Gully Chair", status: "open" },
+    { name: "Monkey Bar Poma", status: "open" },
+    { name: "Mouse Trap Carpet", status: "open" },
+    { name: "Petes Train Carpet", status: "open" },
+    { name: "Boardwalk Carpet", status: "open" },
+    { name: "Snowsports School Carpet", status: "open" },
+  ];
+
+  const WEATHER_ICON = (code) => {
+    if ([0].includes(code)) return "☀️";
+    if ([1,2].includes(code)) return "🌤️";
+    if ([3].includes(code)) return "☁️";
+    if ([45,48].includes(code)) return "🌫️";
+    if ([51,53,55,56,57].includes(code)) return "🌦️";
+    if ([61,63,65,66,67,80,81,82].includes(code)) return "🌧️";
+    if ([71,73,75,77,85,86].includes(code)) return "🌨️";
+    if ([95,96,99].includes(code)) return "⛈️";
+    return "❄️";
+  };
+
+  function renderLifts(){
+    const open = LIFTS.filter(l => l.status === "open").length;
+    document.getElementById("liftSummary").textContent =
+      `${open} of ${LIFTS.length} lifts spinning right now`;
+    document.getElementById("liftList").innerHTML = LIFTS.map(l => `
+      <div class="lift-row">
+        <span class="name">${l.name}</span>
+        <span class="badge ${l.status}">${l.status}</span>
+      </div>
+    `).join("");
+  }
+
+  async function loadWeather(){
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}` +
+      `&daily=weathercode,temperature_2m_max,temperature_2m_min,snowfall_sum,windspeed_10m_max` +
+      `&current=temperature_2m,weathercode,windspeed_10m` +
+      `&timezone=Australia%2FMelbourne&forecast_days=16`;
+
+    try{
+      const res = await fetch(url);
+      if(!res.ok) throw new Error("Weather request failed");
+      const data = await res.json();
+      renderCurrent(data);
+      renderForecast(data);
+    }catch(err){
+      document.getElementById("conditionsGrid").innerHTML =
+        `<div class="loading">Couldn't load live weather right now. Try refreshing, or check <a href="https://www.fallscreek.com.au/weather/" target="_blank" rel="noopener">fallscreek.com.au/weather</a>.</div>`;
+      document.getElementById("forecastScroll").innerHTML = "";
+      console.error(err);
+    }
+  }
+
+  function renderCurrent(data){
+    const c = data.current;
+    const todaySnow = data.daily.snowfall_sum[0];
+    const grid = document.getElementById("conditionsGrid");
+    grid.innerHTML = `
+      <div class="stat-card">
+        <div class="label">Temp now</div>
+        <div class="value">${Math.round(c.temperature_2m)}<span class="unit">°C</span></div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Conditions</div>
+        <div class="value" style="font-size:26px">${WEATHER_ICON(c.weathercode)}</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Wind</div>
+        <div class="value">${Math.round(c.windspeed_10m)}<span class="unit">km/h</span></div>
+      </div>
+      <div class="stat-card">
+        <div class="label">New snow today</div>
+        <div class="value">${todaySnow.toFixed(1)}<span class="unit">cm</span></div>
+      </div>
+    `;
+  }
+
+  function renderForecast(data){
+    const days = data.daily.time.slice(0, 14);
+    const scroll = document.getElementById("forecastScroll");
+    scroll.innerHTML = days.map((dateStr, i) => {
+      const d = new Date(dateStr + "T00:00:00");
+      const dayName = d.toLocaleDateString("en-AU", { weekday: "short" });
+      const dateLabel = d.toLocaleDateString("en-AU", { day: "numeric", month: "short" });
+      const max = Math.round(data.daily.temperature_2m_max[i]);
+      const min = Math.round(data.daily.temperature_2m_min[i]);
+      const snow = data.daily.snowfall_sum[i];
+      const icon = WEATHER_ICON(data.daily.weathercode[i]);
+      return `
+        <div class="fc-card">
+          <div class="day">${dayName}</div>
+          <div class="date">${dateLabel}</div>
+          <div class="icon">${icon}</div>
+          <div class="temps"><span class="max">${max}°</span> <span class="min">${min}°</span></div>
+          <div class="snow ${snow > 0 ? '' : 'none'}">${snow > 0 ? snow.toFixed(0) + 'cm snow' : 'no snow'}</div>
+        </div>
+      `;
+    }).join("");
+  }
+
+  // ---------------- Email signup ----------------
+  const form = document.getElementById("signupForm");
+  const msg = document.getElementById("formMsg");
+  const btn = document.getElementById("signupBtn");
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const email = document.getElementById("emailInput").value.trim();
+    msg.textContent = "";
+    msg.className = "form-msg";
+
+    if(!API_BASE_URL){
+      msg.textContent = "Backend not connected yet — see README.md to deploy server.js, then set API_BASE_URL at the top of this file.";
+      msg.classList.add("err");
+      return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = "Sending…";
+
+    try{
+      const res = await fetch(`${API_BASE_URL}/api/subscribe`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email })
+      });
+      const body = await res.json();
+      if(!res.ok) throw new Error(body.error || "Something went wrong");
+
+      msg.textContent = "You're in — check your inbox, today's report is on its way.";
+      msg.classList.add("ok");
+      form.reset();
+    }catch(err){
+      msg.textContent = err.message || "Couldn't sign up right now, please try again.";
+      msg.classList.add("err");
+    }finally{
+      btn.disabled = false;
+      btn.textContent = "Send me reports";
+    }
+  });
+
+  renderLifts();
+  loadWeather();
+</script>
+
+</body>
+</html>
